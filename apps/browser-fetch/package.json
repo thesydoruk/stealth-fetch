@@ -1,0 +1,19 @@
+{
+  "name": "@stealth-fetch/browser-fetch",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "lint": "tsc --noEmit -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.39.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.0"
+  }
+}

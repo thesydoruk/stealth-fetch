@@ -1,0 +1,21 @@
+{
+  "name": "stealth-fetch-repo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "browser-fetch and stealth-fetch microservices",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:browser-fetch": "npm run build -w @stealth-fetch/browser-fetch",
+    "build:stealth-fetch": "npm run build -w @stealth-fetch/stealth-fetch",
+    "start:browser-fetch": "npm run start -w @stealth-fetch/browser-fetch",
+    "start:stealth-fetch": "npm run start -w @stealth-fetch/stealth-fetch",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

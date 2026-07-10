@@ -1,0 +1,44 @@
+services:
+  browser-fetch:
+    build:
+      context: .
+      dockerfile: apps/browser-fetch/Dockerfile
+    ports:
+      - "${BROWSER_FETCH_PORT:-3040}:3040"
+    environment:
+      PORT: "3040"
+      DATA_DIR: /data
+      CACHE_TTL_SECONDS: "${BROWSER_FETCH_CACHE_TTL_SECONDS:-86400}"
+      BROWSER_POOL_SIZE: "${BROWSER_FETCH_POOL_SIZE:-2}"
+      FETCH_TIMEOUT_MS: "${BROWSER_FETCH_TIMEOUT_MS:-90000}"
+      BROWSER_HEADLESS: "${BROWSER_FETCH_HEADLESS:-false}"
+      MAX_REQUEST_BODY_BYTES: "${BROWSER_FETCH_MAX_REQUEST_BODY_BYTES:-65536}"
+      LOG_LEVEL: "${BROWSER_FETCH_LOG_LEVEL:-info}"
+      FETCH_API_KEY: "${BROWSER_FETCH_API_KEY:-}"
+    volumes:
+      - ./data/browser-fetch:/data
+    shm_size: "1gb"
+    restart: unless-stopped
+
+  stealth-fetch:
+    build:
+      context: .
+      dockerfile: apps/stealth-fetch/Dockerfile
+    ports:
+      - "${STEALTH_FETCH_PORT:-3041}:3041"
+    environment:
+      PORT: "3041"
+      DATA_DIR: /data
+      CACHE_TTL_SECONDS: "${STEALTH_FETCH_CACHE_TTL_SECONDS:-3600}"
+      BROWSER_POOL_SIZE: "${STEALTH_FETCH_POOL_SIZE:-2}"
+      FETCH_TIMEOUT_MS: "${STEALTH_FETCH_TIMEOUT_MS:-120000}"
+      BROWSER_HEADLESS: "${STEALTH_FETCH_HEADLESS:-false}"
+      MAX_REQUEST_BODY_BYTES: "${STEALTH_FETCH_MAX_REQUEST_BODY_BYTES:-131072}"
+      LOG_LEVEL: "${STEALTH_FETCH_LOG_LEVEL:-info}"
+      FETCH_API_KEY: "${STEALTH_FETCH_API_KEY:-}"
+      REBROWSER_PATCHES_RUNTIME_FIX_MODE: "${REBROWSER_PATCHES_RUNTIME_FIX_MODE:-addBinding}"
+      STEALTH_IN_CONTAINER: "true"
+    volumes:
+      - ./data/stealth-fetch:/data
+    shm_size: "1gb"
+    restart: unless-stopped
