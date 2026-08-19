@@ -1,5 +1,10 @@
 /**
  * Detect and attempt to solve anti-bot interstitials (PerimeterX, DataDome, Cloudflare).
+ *
+ * Do not treat vendor telemetry (`perimeterx`, `_pxappid`) as a challenge by
+ * itself — those strings ship on successful article pages and used to make
+ * every Bloomberg/Reuters fetch look unsolved, wait for network idle, then
+ * return `ok: false` while discarding the HTML.
  */
 
 import type { StealthPage } from "./human-behavior";
@@ -8,23 +13,32 @@ import { createLogger } from "./logger";
 
 const log = createLogger("challenge-solver");
 
-const CHALLENGE_MARKERS = [
+/** Visible interstitial / widget — not mere bot-script instrumentation. */
+const INTERSTITIAL_MARKERS = [
   "captcha-delivery.com",
   "geo.captcha-delivery",
   "datadome",
   "/cdn-cgi/challenge-platform",
   "cf-browser-verification",
-  "perimeterx",
   "px-captcha",
-  "press & hold",
-  "press and hold",
-  "_pxappid",
+  "press & hold to confirm",
+  "press and hold to confirm",
   "are you a robot",
 ];
 
+const PX_INSTRUMENTATION = ["_pxappid", "perimeterx"];
+
+function hasArticlePayload(html: string): boolean {
+  const lower = html.toLowerCase();
+  return lower.includes("__next_data__") || /<h1[\s>]/i.test(html);
+}
+
+/** True only for an interstitial or a PX shell with no article payload. */
 export function looksLikeChallenge(html: string): boolean {
   const lower = html.toLowerCase();
-  return CHALLENGE_MARKERS.some((sig) => lower.includes(sig));
+  if (INTERSTITIAL_MARKERS.some((sig) => lower.includes(sig))) return true;
+  const hasPx = PX_INSTRUMENTATION.some((sig) => lower.includes(sig));
+  return hasPx && !hasArticlePayload(html);
 }
 
 interface CaptchaTarget {
@@ -89,7 +103,8 @@ export interface ChallengeSolveResult {
 }
 
 /**
- * When challenge HTML is present, attempt interactive solve then wait for navigation.
+ * When challenge HTML is present, attempt interactive solve then wait for the
+ * next document. Uses `domcontentloaded` — live quote/ad pages never go idle.
  */
 export async function solveChallengeIfPresent(
   page: StealthPage & {
@@ -113,20 +128,20 @@ export async function solveChallengeIfPresent(
       y: target.y,
     });
     await humanPressAndHold(page, target.x, target.y, target.holdMs, cursorPage);
+    try {
+      await page.waitForNavigation({
+        waitUntil: "domcontentloaded",
+        timeout: Math.max(15_000, navigationTimeoutMs),
+      });
+      await humanDelay(500, 1_200);
+    } catch (err) {
+      log.warn("Post-challenge navigation did not complete", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   } else {
-    log.warn("Challenge detected but no interactive target found; waiting for auto-navigation");
-  }
-
-  try {
-    await page.waitForNavigation({
-      waitUntil: "networkidle2",
-      timeout: Math.max(15_000, navigationTimeoutMs),
-    });
-    await humanDelay(500, 1_200);
-  } catch (err) {
-    log.warn("Post-challenge navigation did not complete", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    log.warn("Challenge detected but no interactive target found; not waiting for navigation");
+    await humanDelay(400, 900);
   }
 
   const htmlAfter = await page.content();
