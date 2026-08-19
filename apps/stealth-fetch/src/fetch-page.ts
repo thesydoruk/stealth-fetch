@@ -14,6 +14,7 @@ import {
   type StealthPage,
 } from "./human-behavior";
 import { createLogger } from "./logger";
+import { FALLBACK_VIEWPORT } from "./constants";
 import { applySessionCookies, runWarmupSession, type NavigablePage } from "./session-flow";
 import type { StealthFetchOptions, StealthFetchResult } from "./types";
 
@@ -26,6 +27,7 @@ interface PuppeteerResponse {
 
 interface PuppeteerPage extends NavigablePage, StealthPage {
   setUserAgent: (ua: string) => Promise<void>;
+  setViewport?: (vp: { width: number; height: number; deviceScaleFactor?: number }) => Promise<void>;
   setExtraHTTPHeaders: (headers: Record<string, string>) => Promise<void>;
   setJavaScriptEnabled: (enabled: boolean) => Promise<void>;
   emulateTimezone?: (timezone: string) => Promise<void>;
@@ -38,6 +40,7 @@ interface PuppeteerPage extends NavigablePage, StealthPage {
 
 async function configurePage(page: PuppeteerPage, options: StealthFetchOptions): Promise<void> {
   if (options.userAgent) await page.setUserAgent(options.userAgent);
+  if (page.setViewport) await page.setViewport(FALLBACK_VIEWPORT);
 
   const baseHeaders: Record<string, string> = {
     Accept:
@@ -151,18 +154,11 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
     let html = await page.content();
 
     if (options.solveChallenges !== false && looksLikeChallenge(html)) {
-      const solved = await solveChallengeIfPresent(
-        page,
-        html,
-        options.waitForSelectorTimeoutMs,
-        page,
-      );
+      const solved = await solveChallengeIfPresent(page, html, options.waitForSelectorTimeoutMs);
       challengeDetected = solved.detected;
       challengeSolved = solved.solved;
       html = solved.htmlAfter;
-      if (solved.solved) {
-        response = null;
-      }
+      if (solved.response) response = solved.response as PuppeteerResponse;
     }
 
     if (options.waitForSelector) {
@@ -185,6 +181,8 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
     }
     if (human.readingScroll) {
       await simulateReadingScroll(page, human.readingScrollSteps);
+    } else {
+      await simulateLightScroll(page);
     }
 
     await expandHubListing(page, options);
@@ -209,6 +207,29 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
     };
   } finally {
     releaseBrowser(browser as PooledBrowser);
+  }
+}
+
+/** Light in-page scroll — same as in-tree browser-fetch, not a full reading pass. */
+async function simulateLightScroll(page: PuppeteerPage): Promise<void> {
+  try {
+    await page.evaluate(() => {
+      const w = globalThis as unknown as {
+        scrollBy: (options: { top: number; behavior: string }) => void;
+        innerHeight: number;
+      };
+      w.scrollBy({ top: Math.floor(w.innerHeight * 0.35), behavior: "instant" });
+    });
+    await humanDelay(250, 700);
+    await page.evaluate(() => {
+      const w = globalThis as unknown as {
+        scrollBy: (options: { top: number; behavior: string }) => void;
+        innerHeight: number;
+      };
+      w.scrollBy({ top: -Math.floor(w.innerHeight * 0.12), behavior: "instant" });
+    });
+  } catch {
+    /* ignore */
   }
 }
 
