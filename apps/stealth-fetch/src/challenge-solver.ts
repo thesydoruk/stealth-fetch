@@ -48,8 +48,16 @@ interface CaptchaTarget {
   kind: "perimeterx" | "generic";
 }
 
-/** Locate a press-and-hold or captcha control inside the main frame. */
-async function findCaptchaTarget(page: StealthPage): Promise<CaptchaTarget | null> {
+type FrameSearchPage = StealthPage & {
+  frames?: () => StealthPage[];
+};
+
+/**
+ * Locate a press-and-hold control. Requires "press"+"hold" in the visible
+ * label — a bare `#px-captcha` shell at a fixed point was being clicked
+ * every time (always 473,233) while the real widget sat in an iframe.
+ */
+async function findCaptchaTargetInFrame(page: StealthPage): Promise<CaptchaTarget | null> {
   return page.evaluate(() => {
     const candidates: Array<{ el: Element; score: number; kind: "perimeterx" | "generic" }> = [];
 
@@ -65,20 +73,20 @@ async function findCaptchaTarget(page: StealthPage): Promise<CaptchaTarget | nul
     for (const selector of selectors) {
       document.querySelectorAll(selector).forEach((el) => {
         if (!(el instanceof HTMLElement)) return;
-        const text = (el.innerText || el.textContent || "").toLowerCase();
+        const label = `${el.innerText || ""} ${el.getAttribute("aria-label") || ""}`.toLowerCase();
         const rect = el.getBoundingClientRect();
-        if (rect.width < 40 || rect.height < 20) return;
+        if (rect.width < 80 || rect.height < 28) return;
         if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+        if (!label.includes("press") || !label.includes("hold")) return;
 
-        let score = 0;
+        let score = 10;
         let kind: "perimeterx" | "generic" = "generic";
-        if (text.includes("press") && text.includes("hold")) score += 10;
         if (el.id.includes("px") || el.className.toLowerCase().includes("px-captcha")) {
           score += 12;
           kind = "perimeterx";
         }
-        if (selector === "#px-captcha") score += 15;
-        if (score > 0) candidates.push({ el, score, kind });
+        if (selector === "#px-captcha") score += 8;
+        candidates.push({ el, score, kind });
       });
     }
 
@@ -94,6 +102,24 @@ async function findCaptchaTarget(page: StealthPage): Promise<CaptchaTarget | nul
       kind: best.kind,
     };
   });
+}
+
+/** Search the main document and same-origin iframes. */
+async function findCaptchaTarget(page: FrameSearchPage): Promise<CaptchaTarget | null> {
+  const frames: StealthPage[] = [page];
+  if (typeof page.frames === "function") {
+    frames.push(...page.frames());
+  }
+
+  for (const frame of frames) {
+    try {
+      const found = await findCaptchaTargetInFrame(frame);
+      if (found) return found;
+    } catch {
+      /* cross-origin frame */
+    }
+  }
+  return null;
 }
 
 export interface ChallengeSolveResult {
