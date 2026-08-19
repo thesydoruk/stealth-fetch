@@ -104,7 +104,53 @@ async function findCaptchaTargetInFrame(page: StealthPage): Promise<CaptchaTarge
   });
 }
 
-/** Search the main document and same-origin iframes. */
+/**
+ * Cross-origin PX widgets cannot be queried inside the iframe. Hold the
+ * center of a visible captcha iframe in page coordinates instead.
+ */
+async function findPxIframeTarget(page: StealthPage): Promise<CaptchaTarget | null> {
+  return page.evaluate(() => {
+    const iframes = Array.from(document.querySelectorAll("iframe"));
+    const scored: Array<{ x: number; y: number; score: number }> = [];
+
+    for (const iframe of iframes) {
+      if (!(iframe instanceof HTMLElement)) continue;
+      const rect = iframe.getBoundingClientRect();
+      if (rect.width < 180 || rect.height < 50) continue;
+      if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+
+      const hint = [
+        iframe.id,
+        iframe.className,
+        iframe.getAttribute("src") ?? "",
+        iframe.getAttribute("title") ?? "",
+        iframe.getAttribute("aria-label") ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      let score = 0;
+      if (hint.includes("px") || hint.includes("perimeter")) score += 8;
+      if (hint.includes("captcha") || hint.includes("human")) score += 8;
+      if (hint.includes("press") || hint.includes("hold")) score += 6;
+      if (score === 0 && iframes.length === 1) score = 2;
+      if (score === 0) continue;
+
+      scored.push({
+        x: Math.round(rect.left + rect.width / 2),
+        y: Math.round(rect.top + rect.height / 2),
+        score,
+      });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+    if (!best) return null;
+    return { x: best.x, y: best.y, holdMs: 3_400 + Math.floor(Math.random() * 800), kind: "perimeterx" as const };
+  });
+}
+
+/** Search labeled controls, then same-origin frames, then captcha iframes. */
 async function findCaptchaTarget(page: FrameSearchPage): Promise<CaptchaTarget | null> {
   const frames: StealthPage[] = [page];
   if (typeof page.frames === "function") {
@@ -119,7 +165,12 @@ async function findCaptchaTarget(page: FrameSearchPage): Promise<CaptchaTarget |
       /* cross-origin frame */
     }
   }
-  return null;
+
+  try {
+    return await findPxIframeTarget(page);
+  } catch {
+    return null;
+  }
 }
 
 export interface ChallengeSolveResult {
