@@ -85,7 +85,14 @@ function resolveWaiters(): void {
   if (next) next();
 }
 
-function pickFreeSlot(proxyKey: string): number {
+/** Slots reserved for an in-flight `launch()` — counted toward the cap. */
+const reservedSlots = new Set<string>();
+
+function slotKey(proxyKey: string, slot: number): string {
+  return `${slot}\n${proxyKey}`;
+}
+
+function takenSlots(proxyKey: string): Set<number> {
   const taken = new Set<number>();
   for (const meta of inUse.values()) {
     if (meta.proxyKey === proxyKey) taken.add(meta.slot);
@@ -93,10 +100,31 @@ function pickFreeSlot(proxyKey: string): number {
   for (const entry of idle) {
     if (entry.proxyKey === proxyKey) taken.add(entry.slot);
   }
+  for (const key of reservedSlots) {
+    const sep = key.indexOf("\n");
+    if (key.slice(sep + 1) === proxyKey) taken.add(Number(key.slice(0, sep)));
+  }
+  return taken;
+}
+
+function pickFreeSlot(proxyKey: string): number {
+  const taken = takenSlots(proxyKey);
   for (let i = 0; i < maxPoolSize; i++) {
     if (!taken.has(i)) return i;
   }
   throw new Error(`No free browser slot for proxy partition "${proxyKey}"`);
+}
+
+/** Serialize capacity check + slot reserve so concurrent callers cannot over-launch. */
+let reserveChain: Promise<void> = Promise.resolve();
+
+function withReserveLock<T>(fn: () => T | Promise<T>): Promise<T> {
+  const run = reserveChain.then(fn, fn);
+  reserveChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 export interface AcquireBrowserOptions {
@@ -104,38 +132,59 @@ export interface AcquireBrowserOptions {
   proxy?: ProxyConfig;
 }
 
-/** Returns a pooled browser or launches Chromium with an isolated on-disk profile slot. */
-export async function acquireBrowser(options: AcquireBrowserOptions): Promise<PooledBrowser> {
-  const proxyKey = proxyPoolKey(options.proxy);
-  const launchOptions = options.launchOptions;
+type ReserveOutcome =
+  | { kind: "reuse"; browser: PooledBrowser }
+  | { kind: "wait" }
+  | { kind: "launch"; slot: number };
 
+function reserveOrReuse(proxyKey: string): ReserveOutcome {
   for (let i = idle.length - 1; i >= 0; i--) {
     const entry = idle[i];
     if (entry.proxyKey !== proxyKey) continue;
     idle.splice(i, 1);
     if (entry.browser.connected !== false) {
       inUse.set(entry.browser, { slot: entry.slot, proxyKey });
-      log.debug("Reused pooled browser", {
-        poolIdle: idle.length,
-        poolActive: inUse.size,
-        slot: entry.slot,
-        proxyKey,
-      });
-      return entry.browser;
+      return { kind: "reuse", browser: entry.browser };
     }
     entry.browser.close().catch(() => {});
   }
 
-  const activeForProxy = [...inUse.values()].filter((m) => m.proxyKey === proxyKey).length;
-  if (activeForProxy >= maxPoolSize) {
-    log.warn("Browser pool at capacity, waiting", { max: maxPoolSize, proxyKey });
-    await waitForRelease();
-    return acquireBrowser(options);
+  if (takenSlots(proxyKey).size >= maxPoolSize) {
+    return { kind: "wait" };
+  }
+
+  const slot = pickFreeSlot(proxyKey);
+  reservedSlots.add(slotKey(proxyKey, slot));
+  return { kind: "launch", slot };
+}
+
+/** Returns a pooled browser or launches Chromium with an isolated on-disk profile slot. */
+export async function acquireBrowser(options: AcquireBrowserOptions): Promise<PooledBrowser> {
+  const proxyKey = proxyPoolKey(options.proxy);
+  const launchOptions = options.launchOptions;
+
+  let slot = -1;
+  for (;;) {
+    const outcome = await withReserveLock(() => reserveOrReuse(proxyKey));
+    if (outcome.kind === "reuse") {
+      log.debug("Reused pooled browser", {
+        poolIdle: idle.length,
+        poolActive: inUse.size,
+        slot: inUse.get(outcome.browser)?.slot,
+        proxyKey,
+      });
+      return outcome.browser;
+    }
+    if (outcome.kind === "wait") {
+      log.warn("Browser pool at capacity, waiting", { max: maxPoolSize, proxyKey });
+      await waitForRelease();
+      continue;
+    }
+    slot = outcome.slot;
+    break;
   }
 
   ensureReaper();
-
-  const slot = pickFreeSlot(proxyKey);
   const dataDir = resolveWritableDataRoot();
   const profileDir = path.join(
     dataDir,
@@ -155,14 +204,21 @@ export async function acquireBrowser(options: AcquireBrowserOptions): Promise<Po
     }
   }
 
-  const browser = (await stealthPuppeteer.launch({
-    ...launchOptions,
-    args,
-    userDataDir: launchOptions.userDataDir ?? profileDir,
-  })) as PooledBrowser;
-  inUse.set(browser, { slot, proxyKey });
-  log.info("Launched browser", { poolIdle: idle.length, poolActive: inUse.size, slot, proxyKey });
-  return browser;
+  try {
+    const browser = (await stealthPuppeteer.launch({
+      ...launchOptions,
+      args,
+      userDataDir: launchOptions.userDataDir ?? profileDir,
+    })) as PooledBrowser;
+    inUse.set(browser, { slot, proxyKey });
+    log.info("Launched browser", { poolIdle: idle.length, poolActive: inUse.size, slot, proxyKey });
+    return browser;
+  } catch (err) {
+    resolveWaiters();
+    throw err;
+  } finally {
+    reservedSlots.delete(slotKey(proxyKey, slot));
+  }
 }
 
 /** Returns a live browser to the idle pool or closes it when the pool is full. */
