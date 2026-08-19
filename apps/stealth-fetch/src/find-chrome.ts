@@ -4,6 +4,8 @@
 
 import fs from "node:fs";
 
+import { STEALTH_ARGS } from "./constants";
+
 const LINUX_CHROME_CANDIDATES = ["/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"];
 
 function firstExisting(paths: string[]): string | null {
@@ -27,15 +29,11 @@ export function findChromePath(): string {
 }
 
 /**
- * Minimal launch flags — extra `--disable-*` flags differ from a normal user Chrome
- * profile and are themselves fingerprint signals on 2026 anti-bot stacks.
+ * Same launch flags as browser-fetch — the path that fetched Bloomberg
+ * before the external-stealth-fetch merge.
  */
 export function resolveStealthLaunchArgs(): string[] {
-  const args = [
-    "--disable-blink-features=AutomationControlled",
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-  ];
+  const args = [...STEALTH_ARGS];
 
   const extraArgs = process.env.CHROMIUM_LAUNCH_ARGS;
   if (extraArgs) {
@@ -60,7 +58,7 @@ export function resolveStealthLaunchOptions(chromiumPath: string, timeoutMs: num
     defaultViewport: null,
     ignoreDefaultArgs: ["--enable-automation"],
     timeout: timeoutMs,
-    /** Pipe transport avoids an open DevTools WebSocket port — smaller CDP footprint. */
-    pipe: process.env.STEALTH_CDP_PIPE !== "false",
+    /** Default off — browser-fetch does not use pipe transport. */
+    pipe: process.env.STEALTH_CDP_PIPE === "true",
   };
 }
