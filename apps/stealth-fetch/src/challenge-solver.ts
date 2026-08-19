@@ -103,8 +103,9 @@ export interface ChallengeSolveResult {
 }
 
 /**
- * When challenge HTML is present, attempt interactive solve then wait for the
- * next document. Uses `domcontentloaded` — live quote/ad pages never go idle.
+ * When challenge HTML is present, attempt interactive solve then poll until
+ * the interstitial is gone. PerimeterX usually stays on the same URL — do not
+ * wait for a navigation that never happens.
  */
 export async function solveChallengeIfPresent(
   page: StealthPage & {
@@ -128,24 +129,22 @@ export async function solveChallengeIfPresent(
       y: target.y,
     });
     await humanPressAndHold(page, target.x, target.y, target.holdMs, cursorPage);
-    try {
-      await page.waitForNavigation({
-        waitUntil: "domcontentloaded",
-        timeout: Math.max(15_000, navigationTimeoutMs),
-      });
-      await humanDelay(500, 1_200);
-    } catch (err) {
-      log.warn("Post-challenge navigation did not complete", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
   } else {
-    log.warn("Challenge detected but no interactive target found; not waiting for navigation");
-    await humanDelay(400, 900);
+    log.warn("Challenge detected but no interactive target found; polling for auto-clear");
   }
 
-  const htmlAfter = await page.content();
+  const deadline = Date.now() + Math.max(15_000, navigationTimeoutMs);
+  let htmlAfter = await page.content();
+  while (looksLikeChallenge(htmlAfter) && Date.now() < deadline) {
+    await humanDelay(400, 900);
+    htmlAfter = await page.content();
+  }
+
   const stillChallenge = looksLikeChallenge(htmlAfter);
+  if (stillChallenge) {
+    log.warn("Challenge HTML still present after solve window");
+  }
+
   return {
     detected: true,
     solved: !stillChallenge,
