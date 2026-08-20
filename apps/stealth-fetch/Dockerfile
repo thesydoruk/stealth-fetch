@@ -35,11 +35,6 @@ COPY apps/stealth-fetch/package.json ./
 RUN npm install --omit=dev \
   && npx camoufox-js fetch
 
-# After Camoufox fetch so the 600MB+ download layer stays cached.
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends xvfb xauth \
-  && rm -rf /var/lib/apt/lists/*
-
 COPY --from=builder /build/dist ./dist
 
 RUN addgroup --system --gid 1001 sf \
@@ -51,7 +46,7 @@ USER sf
 ENV NODE_ENV=production
 ENV DATA_DIR=/data
 ENV HOME=/home/sf
-ENV BROWSER_HEADLESS=virtual
+ENV BROWSER_HEADLESS=true
 
 EXPOSE 3041
 ENTRYPOINT ["dumb-init", "--"]

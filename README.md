@@ -118,7 +118,7 @@ Keep both if you scrape a mix of sites. Use stealth-fetch alone if every target 
 | `DATA_DIR` | both | `/data` | Browser profiles, disk cache, response cache |
 | `CHROMIUM_PATH` | browser-fetch | Chrome in container | Path to Google Chrome binary |
 | `CAMOUFOX_INSTALL_DIR` | stealth-fetch | `/opt/camoufox` in Docker | Camoufox install directory |
-| `BROWSER_HEADLESS` | both | `false` (browser-fetch Docker) / `virtual` (stealth-fetch) | Headless mode (`virtual` = Xvfb on Linux) |
+| `BROWSER_HEADLESS` | both | `false` (browser-fetch Docker) / `true` (stealth-fetch) | Headless mode |
 | `FETCH_API_KEY` | both | — | Require `X-Api-Key` header when set |
 | `CACHE_TTL_SECONDS` | both | `86400` / `3600` | Response cache TTL |
 | `BROWSER_POOL_SIZE` | both | `2` | Max concurrent browser instances |
