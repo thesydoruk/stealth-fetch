@@ -8,7 +8,9 @@
 
 import type { StealthPage } from "./human-behavior";
 import { humanDelay } from "./human-behavior";
+import { looksLikePxHoldChallenge } from "./looksLikePxHoldChallenge";
 import { createLogger } from "./logger";
+import { solvePxHoldChallenge } from "./solvePxHoldChallenge";
 
 const log = createLogger("challenge-solver");
 
@@ -23,7 +25,7 @@ const CHALLENGE_SIGNATURES = [
 
 export function looksLikeChallenge(html: string): boolean {
   const lower = html.toLowerCase();
-  return CHALLENGE_SIGNATURES.some((sig) => lower.includes(sig));
+  return CHALLENGE_SIGNATURES.some((sig) => lower.includes(sig)) || looksLikePxHoldChallenge(html);
 }
 
 export interface ChallengeSolveResult {
@@ -34,9 +36,8 @@ export interface ChallengeSolveResult {
 }
 
 /**
- * When a DataDome / Cloudflare interstitial is present, wait for its
- * auto-reload. No press-and-hold — that is not how the working browser-fetch
- * path handled Bloomberg.
+ * DataDome / Cloudflare: wait for auto-reload. PerimeterX Press & Hold:
+ * locate the widget and hold the mouse down.
  */
 export async function solveChallengeIfPresent(
   page: StealthPage & {
@@ -48,6 +49,10 @@ export async function solveChallengeIfPresent(
 ): Promise<ChallengeSolveResult> {
   if (!looksLikeChallenge(html)) {
     return { detected: false, solved: false, htmlAfter: html };
+  }
+
+  if (looksLikePxHoldChallenge(html)) {
+    return solvePxHoldChallenge(page, html, navigationTimeoutMs);
   }
 
   log.info("Anti-bot challenge detected, waiting for auto-navigation");
