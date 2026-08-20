@@ -14,6 +14,7 @@ import {
   type StealthPage,
 } from "./human-behavior";
 import { createLogger } from "./logger";
+import { FALLBACK_VIEWPORT } from "./constants";
 import { discardCookiesIfPoisoned } from "./discard-poisoned-session";
 import { applySessionCookies, runWarmupSession, type NavigablePage } from "./session-flow";
 import type { StealthFetchOptions, StealthFetchResult } from "./types";
