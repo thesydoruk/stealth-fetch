@@ -1,19 +1,21 @@
 /**
- * Puppeteer-extra browser pool with optional per-launch proxy configuration.
+ * Camoufox (Playwright) browser pool with per-slot persistent profiles.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 
+import type { BrowserContext, Page } from "playwright-core";
+
+import { launchCamoufoxContext } from "./stealth-driver";
 import type { ProxyConfig } from "./types";
 import { createLogger } from "./logger";
 import { resolveWritableDataRoot } from "./resolve-writable-data-root";
-import { stealthPuppeteer } from "./stealth-driver";
 
 export interface PooledBrowser {
-  newPage: () => Promise<unknown>;
+  newPage: () => Promise<Page>;
   close: () => Promise<void>;
-  connected?: boolean;
+  context: BrowserContext;
 }
 
 interface PoolEntry {
@@ -38,20 +40,12 @@ export function proxyPoolKey(proxy?: ProxyConfig): string {
   return proxy.url.trim();
 }
 
-/**
- * Maps {@link ProxyConfig} to Chromium launch flags.
- * Auth credentials are reserved for a future `page.authenticate()` hook.
- */
-export function chromiumArgsForProxy(baseArgs: string[], proxy?: ProxyConfig): string[] {
-  const args = [...baseArgs];
-  const url = proxy?.url?.trim();
-  if (url) {
-    args.push(`--proxy-server=${url}`);
-    if (proxy?.username) {
-      log.debug("Proxy username provided; auth hook not yet implemented", { proxy: url });
-    }
-  }
-  return args;
+function wrapContext(context: BrowserContext): PooledBrowser {
+  return {
+    context,
+    newPage: () => context.newPage(),
+    close: () => context.close(),
+  };
 }
 
 function ensureReaper(): void {
@@ -85,7 +79,6 @@ function resolveWaiters(): void {
   if (next) next();
 }
 
-/** Slots reserved for an in-flight `launch()` — counted toward the cap. */
 const reservedSlots = new Set<string>();
 
 function slotKey(proxyKey: string, slot: number): string {
@@ -115,7 +108,6 @@ function pickFreeSlot(proxyKey: string): number {
   throw new Error(`No free browser slot for proxy partition "${proxyKey}"`);
 }
 
-/** Serialize capacity check + slot reserve so concurrent callers cannot over-launch. */
 let reserveChain: Promise<void> = Promise.resolve();
 
 function withReserveLock<T>(fn: () => T | Promise<T>): Promise<T> {
@@ -128,7 +120,6 @@ function withReserveLock<T>(fn: () => T | Promise<T>): Promise<T> {
 }
 
 export interface AcquireBrowserOptions {
-  launchOptions: Record<string, unknown>;
   proxy?: ProxyConfig;
 }
 
@@ -137,12 +128,16 @@ type ReserveOutcome =
   | { kind: "wait" }
   | { kind: "launch"; slot: number };
 
+function isConnected(browser: PooledBrowser): boolean {
+  return browser.context.browser()?.isConnected() !== false;
+}
+
 function reserveOrReuse(proxyKey: string): ReserveOutcome {
   for (let i = idle.length - 1; i >= 0; i--) {
     const entry = idle[i];
     if (entry.proxyKey !== proxyKey) continue;
     idle.splice(i, 1);
-    if (entry.browser.connected !== false) {
+    if (isConnected(entry.browser)) {
       inUse.set(entry.browser, { slot: entry.slot, proxyKey });
       return { kind: "reuse", browser: entry.browser };
     }
@@ -158,10 +153,9 @@ function reserveOrReuse(proxyKey: string): ReserveOutcome {
   return { kind: "launch", slot };
 }
 
-/** Returns a pooled browser or launches Chromium with an isolated on-disk profile slot. */
+/** Returns a pooled Camoufox context or launches one with an isolated profile slot. */
 export async function acquireBrowser(options: AcquireBrowserOptions): Promise<PooledBrowser> {
   const proxyKey = proxyPoolKey(options.proxy);
-  const launchOptions = options.launchOptions;
 
   let slot = -1;
   for (;;) {
@@ -191,12 +185,8 @@ export async function acquireBrowser(options: AcquireBrowserOptions): Promise<Po
     "profile",
     `${proxyKey.replace(/[^a-z0-9]+/gi, "_")}-slot-${slot}`,
   );
-  const diskCacheDir = path.join(dataDir, "chromium-disk-cache", `${proxyKey}-slot-${slot}`);
-  const baseArgs = (launchOptions.args as string[] | undefined) ?? [];
-  const args = chromiumArgsForProxy(baseArgs, options.proxy);
-  args.push(`--disk-cache-dir=${diskCacheDir}`);
-
-  for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+  fs.mkdirSync(profileDir, { recursive: true });
+  for (const lockName of [".parentlock", "parent.lock", "lock"]) {
     try {
       fs.unlinkSync(path.join(profileDir, lockName));
     } catch {
@@ -205,11 +195,11 @@ export async function acquireBrowser(options: AcquireBrowserOptions): Promise<Po
   }
 
   try {
-    const browser = (await stealthPuppeteer.launch({
-      ...launchOptions,
-      args,
-      userDataDir: launchOptions.userDataDir ?? profileDir,
-    })) as PooledBrowser;
+    const context = await launchCamoufoxContext({ userDataDir: profileDir, proxy: options.proxy });
+    for (const extra of context.pages()) {
+      await extra.close().catch(() => {});
+    }
+    const browser = wrapContext(context);
     inUse.set(browser, { slot, proxyKey });
     log.info("Launched browser", { poolIdle: idle.length, poolActive: inUse.size, slot, proxyKey });
     return browser;
@@ -232,7 +222,7 @@ export function releaseBrowser(browser: PooledBrowser): void {
     return;
   }
 
-  if (browser.connected === false) {
+  if (!isConnected(browser)) {
     browser.close().catch(() => {});
     resolveWaiters();
     return;

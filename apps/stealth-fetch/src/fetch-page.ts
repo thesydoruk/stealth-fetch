@@ -1,50 +1,29 @@
 /**
- * Full stealth page fetch: warm session, human behavior, challenge solving, reading scroll.
+ * Stealth page fetch via Camoufox: warm session, human behavior, challenge wait.
  */
 
 import { acquireBrowser, releaseBrowser, type PooledBrowser } from "./browser-pool";
 import { looksLikeChallenge, solveChallengeIfPresent } from "./challenge-solver";
-import { findChromePath, resolveStealthLaunchOptions } from "./find-chrome";
+import { discardCookiesIfPoisoned } from "./discard-poisoned-session";
 import {
-  attachHumanCursor,
   humanDelay,
   resolveHumanDefaults,
   simulateMouseWander,
   simulateReadingScroll,
-  type StealthPage,
 } from "./human-behavior";
 import { createLogger } from "./logger";
-import { FALLBACK_VIEWPORT } from "./constants";
-import { discardCookiesIfPoisoned } from "./discard-poisoned-session";
-import { applySessionCookies, runWarmupSession, type NavigablePage } from "./session-flow";
+import { adaptPlaywrightPage, type AdaptedPage } from "./playwright-page-adapter";
+import { applySessionCookies, runWarmupSession } from "./session-flow";
 import type { StealthFetchOptions, StealthFetchResult } from "./types";
 
 const log = createLogger("fetch-page");
 
-interface PuppeteerResponse {
+interface GotoResponse {
   status: () => number | null;
   headers: () => Record<string, string>;
 }
 
-interface PuppeteerPage extends NavigablePage, StealthPage {
-  setUserAgent: (ua: string) => Promise<void>;
-  setViewport?: (vp: { width: number; height: number; deviceScaleFactor?: number }) => Promise<void>;
-  setExtraHTTPHeaders: (headers: Record<string, string>) => Promise<void>;
-  setJavaScriptEnabled: (enabled: boolean) => Promise<void>;
-  emulateTimezone?: (timezone: string) => Promise<void>;
-  goto: (url: string, options?: Record<string, unknown>) => Promise<PuppeteerResponse | null>;
-  waitForSelector: (selector: string, options?: Record<string, unknown>) => Promise<unknown>;
-  waitForNavigation: (options?: Record<string, unknown>) => Promise<PuppeteerResponse | null>;
-  content: () => Promise<string>;
-  close: () => Promise<void>;
-  cookies?: () => Promise<Array<Record<string, unknown>>>;
-  deleteCookie?: (...cookies: Array<Record<string, unknown>>) => Promise<void>;
-}
-
-async function configurePage(page: PuppeteerPage, options: StealthFetchOptions): Promise<void> {
-  if (options.userAgent) await page.setUserAgent(options.userAgent);
-  if (page.setViewport) await page.setViewport(FALLBACK_VIEWPORT);
-
+async function configurePage(page: AdaptedPage, options: StealthFetchOptions): Promise<void> {
   const baseHeaders: Record<string, string> = {
     Accept:
       "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -58,31 +37,21 @@ async function configurePage(page: PuppeteerPage, options: StealthFetchOptions):
   };
   if (options.referer) baseHeaders.Referer = options.referer;
   await page.setExtraHTTPHeaders({ ...baseHeaders, ...(options.extraHeaders ?? {}) });
-
-  if (page.emulateTimezone) {
-    try {
-      await page.emulateTimezone(options.timezone ?? "America/New_York");
-    } catch {
-      /* unsupported tz */
-    }
-  }
-
-  await page.setJavaScriptEnabled(true);
   await applySessionCookies(page, options.sessionCookies);
 }
 
 async function navigateTarget(
-  page: PuppeteerPage,
+  page: AdaptedPage,
   url: string,
   options: StealthFetchOptions,
-): Promise<PuppeteerResponse | null> {
-  const waitUntil = options.waitForNetworkIdle ? "networkidle2" : "domcontentloaded";
+): Promise<GotoResponse | null> {
+  const waitUntil = options.waitForNetworkIdle ? "networkidle" : "domcontentloaded";
   const gotoOptions: Record<string, unknown> = { waitUntil, timeout: options.timeoutMs };
   if (options.referer) gotoOptions.referer = options.referer;
   return page.goto(url, gotoOptions);
 }
 
-async function expandHubListing(page: PuppeteerPage, options: StealthFetchOptions): Promise<void> {
+async function expandHubListing(page: AdaptedPage, options: StealthFetchOptions): Promise<void> {
   const clickSelector = options.hubLoadMoreSelector?.trim();
   const maxClicks = options.hubLoadMoreMaxRepeats ?? 0;
   const maxScrolls = options.hubScrollMaxRepeats ?? 0;
@@ -118,23 +87,38 @@ async function expandHubListing(page: PuppeteerPage, options: StealthFetchOption
   }
 }
 
+async function simulateLightScroll(page: AdaptedPage): Promise<void> {
+  try {
+    await page.evaluate(() => {
+      const w = globalThis as unknown as {
+        scrollBy: (options: { top: number; behavior: string }) => void;
+        innerHeight: number;
+      };
+      w.scrollBy({ top: Math.floor(w.innerHeight * 0.35), behavior: "instant" });
+    });
+    await humanDelay(250, 700);
+    await page.evaluate(() => {
+      const w = globalThis as unknown as {
+        scrollBy: (options: { top: number; behavior: string }) => void;
+        innerHeight: number;
+      };
+      w.scrollBy({ top: -Math.floor(w.innerHeight * 0.12), behavior: "instant" });
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 async function fetchOnce(url: string, options: StealthFetchOptions): Promise<StealthFetchResult> {
   const human = resolveHumanDefaults(options.humanSession);
-
-  const browser = await acquireBrowser({
-    launchOptions: resolveStealthLaunchOptions(options.chromiumPath, options.timeoutMs),
-    proxy: options.proxy,
-  });
+  const browser = await acquireBrowser({ proxy: options.proxy });
 
   let challengeDetected = false;
   let challengeSolved = false;
 
   try {
-    const page = (await (
-      browser as unknown as { newPage: () => Promise<PuppeteerPage> }
-    ).newPage()) as PuppeteerPage;
-
-    attachHumanCursor(page);
+    const pwPage = await browser.newPage();
+    const page = adaptPlaywrightPage(pwPage, browser.context);
     await configurePage(page, options);
 
     if (options.warmupUrl) {
@@ -144,11 +128,10 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
         options.warmupPaths,
         options.timeoutMs,
         options.humanSession,
-        page,
       );
       await humanDelay(human.delayMinMs, human.delayMaxMs + 600);
     } else if (human.mouseMovement) {
-      await simulateMouseWander(page, 1, page);
+      await simulateMouseWander(page, 1);
     }
 
     let response = await navigateTarget(page, url, options);
@@ -161,7 +144,7 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
       challengeDetected = solved.detected;
       challengeSolved = solved.solved;
       html = solved.htmlAfter;
-      if (solved.response) response = solved.response as PuppeteerResponse;
+      if (solved.response) response = solved.response as GotoResponse;
     }
 
     if (options.waitForSelector) {
@@ -180,7 +163,7 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
     }
 
     if (human.mouseMovement) {
-      await simulateMouseWander(page, 2, page);
+      await simulateMouseWander(page, 2);
     }
     if (human.readingScroll) {
       await simulateReadingScroll(page, human.readingScrollSteps);
@@ -211,35 +194,12 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
       attempts: 1,
     };
   } finally {
-    releaseBrowser(browser as PooledBrowser);
-  }
-}
-
-/** Light in-page scroll — same as in-tree browser-fetch, not a full reading pass. */
-async function simulateLightScroll(page: PuppeteerPage): Promise<void> {
-  try {
-    await page.evaluate(() => {
-      const w = globalThis as unknown as {
-        scrollBy: (options: { top: number; behavior: string }) => void;
-        innerHeight: number;
-      };
-      w.scrollBy({ top: Math.floor(w.innerHeight * 0.35), behavior: "instant" });
-    });
-    await humanDelay(250, 700);
-    await page.evaluate(() => {
-      const w = globalThis as unknown as {
-        scrollBy: (options: { top: number; behavior: string }) => void;
-        innerHeight: number;
-      };
-      w.scrollBy({ top: -Math.floor(w.innerHeight * 0.12), behavior: "instant" });
-    });
-  } catch {
-    /* ignore */
+    releaseBrowser(browser);
   }
 }
 
 /**
- * Fetch rendered HTML with warm session, human simulation, and challenge retries.
+ * Fetch rendered HTML with Camoufox, human simulation, and challenge retries.
  */
 export async function fetchStealthHtml(
   url: string,
@@ -251,8 +211,8 @@ export async function fetchStealthHtml(
       partial.waitForSelectorTimeoutMs ??
       parseInt(process.env.FETCH_WAIT_FOR_SELECTOR_MS || "20000", 10),
     waitForNetworkIdle: partial.waitForNetworkIdle ?? true,
-    headless: partial.headless ?? process.env.BROWSER_HEADLESS === "true",
-    chromiumPath: partial.chromiumPath ?? findChromePath(),
+    headless: partial.headless ?? process.env.BROWSER_HEADLESS !== "false",
+    chromiumPath: partial.chromiumPath ?? process.env.CAMOUFOX_INSTALL_DIR ?? "/opt/camoufox",
     solveChallenges: partial.solveChallenges ?? true,
     retryOnChallenge: partial.retryOnChallenge ?? true,
     maxChallengeAttempts: partial.maxChallengeAttempts ?? 2,

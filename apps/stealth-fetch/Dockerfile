@@ -1,7 +1,11 @@
-# Docker-only stealth page-fetch microservice (Google Chrome + rebrowser + Xvfb).
-# Run via docker-compose.common.yml — not with npm on the host.
-FROM node:20-slim AS builder
+# Docker-only stealth page-fetch microservice (Camoufox + Playwright).
+# Run via docker-compose — not with npm on the host.
+FROM node:22-slim AS builder
 WORKDIR /build
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY apps/stealth-fetch/package.json ./
 RUN npm install
@@ -10,43 +14,40 @@ COPY apps/stealth-fetch/tsconfig.build.json ./
 COPY apps/stealth-fetch/src ./src
 RUN npx tsc -p tsconfig.build.json
 
-FROM node:20-slim
+FROM node:22-slim
 WORKDIR /app
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    wget gnupg ca-certificates fonts-liberation fonts-noto-color-emoji fonts-noto-cjk \
-    xvfb xauth dumb-init \
-  && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
-    | gpg --dearmor -o /etc/apt/trusted.gpg.d/google.gpg \
-  && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
-    > /etc/apt/sources.list.d/google.list \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends google-chrome-stable \
-  && apt-mark manual google-chrome-stable \
+    ca-certificates fonts-liberation fonts-noto-color-emoji fonts-noto-cjk \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 libdrm2 \
+    libdbus-glib-1-2 libgbm1 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 \
+    libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxkbcommon0 libxrandr2 libxrender1 libxt6 \
+    python3 make g++ \
+    wget dumb-init \
   && rm -rf /var/lib/apt/lists/*
 
-ENV CHROMIUM_PATH=/usr/bin/google-chrome-stable
+ENV CAMOUFOX_INSTALL_DIR=/opt/camoufox
 ENV STEALTH_IN_CONTAINER=true
-ENV REBROWSER_PATCHES_RUNTIME_FIX_MODE=addBinding
 
 COPY apps/stealth-fetch/package.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev \
+  && npx camoufox-js fetch
 
 COPY --from=builder /build/dist ./dist
 
 RUN addgroup --system --gid 1001 sf \
   && adduser --system --uid 1001 --gid 1001 --home /home/sf --shell /bin/sh sf \
-  && mkdir -p /home/sf /data \
-  && chown -R sf:sf /home/sf /app /data
+  && mkdir -p /home/sf /data /opt/camoufox \
+  && chown -R sf:sf /home/sf /app /data /opt/camoufox
 
 USER sf
 ENV NODE_ENV=production
 ENV DATA_DIR=/data
 ENV HOME=/home/sf
-ENV BROWSER_HEADLESS=false
-ENV DISPLAY=:99
+ENV BROWSER_HEADLESS=true
 
 EXPOSE 3041
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1920x1080x24 -ac +extension RANDR -nolisten tcp", "node", "dist/server.js"]
+CMD ["node", "dist/server.js"]

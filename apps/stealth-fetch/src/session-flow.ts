@@ -37,7 +37,6 @@ export async function runWarmupSession(
   warmupPaths: string[] | undefined,
   timeoutMs: number,
   human?: HumanSessionOptions,
-  cursorPage?: object,
 ): Promise<void> {
   const opts = resolveHumanDefaults(human);
   const waitUntil = "domcontentloaded";
@@ -47,7 +46,7 @@ export async function runWarmupSession(
   await humanDelay(opts.delayMinMs, opts.delayMaxMs);
 
   if (opts.mouseMovement) {
-    await simulateMouseWander(page, 2, cursorPage);
+    await simulateMouseWander(page, 2);
   }
   if (opts.warmupScroll) {
     await simulateWarmupScroll(page);
@@ -60,7 +59,7 @@ export async function runWarmupSession(
     log.info("Warmup intermediate path", { url: nextUrl });
     await page.goto(nextUrl, { waitUntil, timeout: timeoutMs });
     await humanDelay(opts.delayMinMs, opts.delayMaxMs);
-    if (opts.mouseMovement) await simulateMouseWander(page, 1, cursorPage);
+    if (opts.mouseMovement) await simulateMouseWander(page, 1);
     if (opts.warmupScroll) await simulateWarmupScroll(page);
   }
 }

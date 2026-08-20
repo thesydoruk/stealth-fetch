@@ -1,8 +1,6 @@
 /**
- * Human-like delays, ghost-cursor mouse paths, wheel scroll, and click helpers.
+ * Human-like delays, mouse paths, and wheel scroll.
  */
-
-import { createCursor, type GhostCursor } from "ghost-cursor";
 
 import type { HumanSessionOptions } from "./types";
 
@@ -22,18 +20,6 @@ export interface StealthPage {
   viewport: () => { width: number; height: number } | null;
 }
 
-const cursors = new WeakMap<object, GhostCursor>();
-
-/** Attach a ghost-cursor instance to a Puppeteer page (Bezier mouse paths). */
-export function attachHumanCursor(page: object): GhostCursor {
-  let cursor = cursors.get(page);
-  if (!cursor) {
-    cursor = createCursor(page as Parameters<typeof createCursor>[0]);
-    cursors.set(page, cursor);
-  }
-  return cursor;
-}
-
 export function resolveHumanDefaults(options?: HumanSessionOptions): Required<HumanSessionOptions> {
   return {
     mouseMovement: options?.mouseMovement ?? true,
@@ -51,29 +37,14 @@ export function humanDelay(minMs: number, maxMs: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Move via ghost-cursor when attached; otherwise fall back to eased steps. */
+/** Eased mouse move across the viewport. */
 export async function moveMouseHuman(
   page: StealthPage,
   targetX: number,
   targetY: number,
   startX = targetX * 0.4,
   startY = targetY * 0.3,
-  cursorPage?: object,
 ): Promise<void> {
-  if (cursorPage) {
-    const cursor = cursors.get(cursorPage);
-    if (cursor) {
-      await cursor.moveTo(
-        { x: targetX, y: targetY },
-        {
-          moveDelay: 8 + Math.floor(Math.random() * 18),
-          randomizeMoveDelay: true,
-        },
-      );
-      return;
-    }
-  }
-
   const steps = 12 + Math.floor(Math.random() * 10);
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
@@ -97,24 +68,7 @@ export async function randomViewportPoint(page: StealthPage): Promise<{ x: numbe
 }
 
 /** Light wandering moves — simulates scanning the page before reading. */
-export async function simulateMouseWander(
-  page: StealthPage,
-  moves = 3,
-  cursorPage?: object,
-): Promise<void> {
-  const cursor = cursorPage ? cursors.get(cursorPage) : undefined;
-  if (cursor) {
-    for (let i = 0; i < moves; i++) {
-      const point = await randomViewportPoint(page);
-      await cursor.moveTo(point, {
-        moveDelay: 10 + Math.floor(Math.random() * 24),
-        randomizeMoveDelay: true,
-      });
-      await humanDelay(120, 520);
-    }
-    return;
-  }
-
+export async function simulateMouseWander(page: StealthPage, moves = 3): Promise<void> {
   let last = await randomViewportPoint(page);
   await moveMouseHuman(page, last.x, last.y);
   for (let i = 0; i < moves; i++) {
@@ -164,42 +118,4 @@ export async function simulateReadingScroll(page: StealthPage, steps: number): P
     }
     await humanDelay(700, 2_200);
   }
-}
-
-/** Click at viewport coordinates with pre-move and post-click pause. */
-export async function humanClickAt(
-  page: StealthPage,
-  x: number,
-  y: number,
-  holdMs = 80,
-  cursorPage?: object,
-): Promise<void> {
-  await moveMouseHuman(page, x, y, x * 0.4, y * 0.3, cursorPage);
-  await humanDelay(60, 180);
-  await page.mouse.down();
-  await humanDelay(holdMs, holdMs + 60);
-  await page.mouse.up();
-  await humanDelay(200, 500);
-}
-
-/** Press-and-hold at coordinates (PerimeterX). */
-export async function humanPressAndHold(
-  page: StealthPage,
-  x: number,
-  y: number,
-  holdMs: number,
-  cursorPage?: object,
-): Promise<void> {
-  await moveMouseHuman(page, x, y, x * 0.35, y * 0.25, cursorPage);
-  await humanDelay(120, 320);
-  await page.mouse.down();
-  const holdUntil = Date.now() + holdMs;
-  while (Date.now() < holdUntil) {
-    const jitterX = x + Math.round((Math.random() - 0.5) * 4);
-    const jitterY = y + Math.round((Math.random() - 0.5) * 3);
-    await page.mouse.move(jitterX, jitterY, { steps: 1 });
-    await humanDelay(180, 420);
-  }
-  await page.mouse.up();
-  await humanDelay(600, 1_200);
 }
