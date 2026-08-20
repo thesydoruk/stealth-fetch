@@ -4,8 +4,6 @@
 
 import fs from "node:fs";
 
-import { STEALTH_ARGS } from "./constants";
-
 const LINUX_CHROME_CANDIDATES = ["/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"];
 
 function firstExisting(paths: string[]): string | null {
@@ -29,11 +27,17 @@ export function findChromePath(): string {
 }
 
 /**
- * Same launch flags as browser-fetch — the path that fetched Bloomberg
- * before the external-stealth-fetch merge.
+ * Minimal launch flags. Extra `--disable-*` entries differ from a normal user
+ * Chrome and are themselves fingerprint signals on PerimeterX / DataDome.
  */
 export function resolveStealthLaunchArgs(): string[] {
-  const args = [...STEALTH_ARGS];
+  const args = [
+    "--disable-blink-features=AutomationControlled",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--window-size=1920,1080",
+    "--lang=en-US,en",
+  ];
 
   const extraArgs = process.env.CHROMIUM_LAUNCH_ARGS;
   if (extraArgs) {

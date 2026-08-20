@@ -14,7 +14,7 @@ import {
   type StealthPage,
 } from "./human-behavior";
 import { createLogger } from "./logger";
-import { FALLBACK_VIEWPORT } from "./constants";
+import { discardCookiesIfPoisoned } from "./discard-poisoned-session";
 import { applySessionCookies, runWarmupSession, type NavigablePage } from "./session-flow";
 import type { StealthFetchOptions, StealthFetchResult } from "./types";
 
@@ -36,6 +36,8 @@ interface PuppeteerPage extends NavigablePage, StealthPage {
   waitForNavigation: (options?: Record<string, unknown>) => Promise<PuppeteerResponse | null>;
   content: () => Promise<string>;
   close: () => Promise<void>;
+  cookies?: () => Promise<Array<Record<string, unknown>>>;
+  deleteCookie?: (...cookies: Array<Record<string, unknown>>) => Promise<void>;
 }
 
 async function configurePage(page: PuppeteerPage, options: StealthFetchOptions): Promise<void> {
@@ -194,11 +196,13 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
       challengeSolved = false;
     }
 
+    const statusCode = response?.status() ?? null;
+    await discardCookiesIfPoisoned(page, html, statusCode);
     await page.close();
 
     return {
       finalUrl: finalUrl !== url ? finalUrl : null,
-      statusCode: response?.status() ?? null,
+      statusCode,
       contentType: response?.headers()?.["content-type"] ?? null,
       html,
       challengeDetected,
