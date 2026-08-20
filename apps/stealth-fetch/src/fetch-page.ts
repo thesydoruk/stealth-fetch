@@ -117,7 +117,7 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
   let challengeSolved = false;
 
   try {
-    const pwPage = browser.context.pages()[0] ?? (await browser.newPage());
+    const pwPage = await browser.newPage();
     const page = adaptPlaywrightPage(pwPage, browser.context);
     await configurePage(page, options);
 
@@ -182,7 +182,7 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
 
     const statusCode = response?.status() ?? null;
     await discardCookiesIfPoisoned(page, html, statusCode);
-    await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: 5_000 }).catch(() => {});
+    await page.close();
 
     return {
       finalUrl: finalUrl !== url ? finalUrl : null,

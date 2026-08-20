@@ -196,6 +196,9 @@ export async function acquireBrowser(options: AcquireBrowserOptions): Promise<Po
 
   try {
     const context = await launchCamoufoxContext({ userDataDir: profileDir, proxy: options.proxy });
+    for (const extra of context.pages()) {
+      await extra.close().catch(() => {});
+    }
     const browser = wrapContext(context);
     inUse.set(browser, { slot, proxyKey });
     log.info("Launched browser", { poolIdle: idle.length, poolActive: inUse.size, slot, proxyKey });
