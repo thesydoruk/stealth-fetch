@@ -15,7 +15,7 @@ export interface SessionCookie {
 }
 
 /**
- * Optional upstream proxy for the stealth browser.
+ * Optional upstream proxy for Chromium.
  * Accepted by the service API; callers may omit it until proxy routing is configured.
  */
 export interface ProxyConfig {
@@ -50,7 +50,7 @@ export interface StealthFetchOptions {
   headless: boolean;
   chromiumPath: string;
   extraHeaders?: Record<string, string>;
-  /** Only set when the caller must override the Camoufox fingerprint UA. */
+  /** Only set when the caller must override — real Chrome UA is preferred. */
   userAgent?: string;
   referer?: string;
   timezone?: string;
@@ -62,7 +62,7 @@ export interface StealthFetchOptions {
   /** Extra pages visited between warmup and target (same origin recommended). */
   warmupPaths?: string[];
   sessionCookies?: SessionCookie[];
-  /** Optional proxy — passed to Camoufox when set. */
+  /** Optional proxy — passed to Chromium when set. */
   proxy?: ProxyConfig;
   humanSession?: HumanSessionOptions;
   /** Attempt PerimeterX / Cloudflare / DataDome solvers. Default true. */

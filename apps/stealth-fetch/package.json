@@ -2,15 +2,17 @@
   "name": "@stealth-fetch/stealth-fetch",
   "version": "0.0.1",
   "private": true,
-  "description": "Docker-only stealth page-fetch microservice (Camoufox).",
+  "description": "Docker-only stealth page-fetch microservice.",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit -p tsconfig.build.json"
   },
   "dependencies": {
-    "camoufox-js": "^0.12.0",
-    "playwright-core": "1.55.1"
+    "ghost-cursor": "^1.4.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "rebrowser-puppeteer-core": "^24.8.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -1,5 +1,5 @@
 /**
- * PerimeterX / DataDome cookies on a pooled browser profile survive across
+ * PerimeterX / DataDome cookies on a pooled Chrome profile survive across
  * fetches. After a 403 robot page they mark the slot as a bot even when the
  * same public IP is fine in a normal browser. Drop them so the next navigation
  * is a clean session.
@@ -11,8 +11,8 @@ import { createLogger } from "./logger";
 const log = createLogger("poisoned-session");
 
 interface CookieJarPage {
-  cookies?: () => Promise<unknown[]>;
-  deleteCookie?: (...cookies: unknown[]) => Promise<void>;
+  cookies?: () => Promise<Array<Record<string, unknown>>>;
+  deleteCookie?: (...cookies: Array<Record<string, unknown>>) => Promise<void>;
 }
 
 export function looksLikePoisonedSession(html: string, statusCode: number | null): boolean {

@@ -1,11 +1,11 @@
 # stealth-fetch
 
-Two HTTP microservices that render pages in a real browser, with disk-backed response caching and a shared browser pool.
+Two HTTP microservices that render pages in real Google Chrome (puppeteer-extra + rebrowser-patches), with disk-backed response caching and a shared browser pool.
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| **browser-fetch** | 3040 | Headless Chrome rendering + disk cache |
-| **stealth-fetch** | 3041 | Camoufox (patched Firefox) with warm sessions and anti-bot challenge wait |
+| **browser-fetch** | 3040 | Stealth Chrome rendering + disk cache |
+| **stealth-fetch** | 3041 | Warm sessions, ghost-cursor, anti-bot challenge solver |
 
 ## Docker
 
@@ -45,7 +45,7 @@ export DATA_DIR=./data/browser-fetch
 npm run start:browser-fetch
 ```
 
-**stealth-fetch** (port 3041) — designed for Docker (`STEALTH_IN_CONTAINER=true`). For a local run you still need a Camoufox binary (`npx camoufox-js fetch`) and Node 22+:
+**stealth-fetch** (port 3041) — designed for Docker (`STEALTH_IN_CONTAINER=true`). For a local run:
 
 ```bash
 set STEALTH_IN_CONTAINER=true   # Windows
@@ -59,7 +59,7 @@ npm run start:stealth-fetch
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | `{ ok: true }` |
-| `GET` | `/info` | Runtime info (browser path, headless mode, cache TTL, `driver`) |
+| `GET` | `/info` | Runtime info (Chrome path, headless mode, cache TTL) |
 | `POST` | `/fetch` | Fetch and return rendered HTML |
 
 `POST /fetch` body (JSON):
@@ -93,10 +93,10 @@ console.log(page.statusCode, page.html.length);
 ## Project layout
 
 ```
-apps/browser-fetch/     Chrome page-fetch service (puppeteer-extra stealth)
-apps/stealth-fetch/     Camoufox + Playwright, challenge wait, session warmup
+apps/browser-fetch/     Light stealth page-fetch service
+apps/stealth-fetch/     Full stealth (rebrowser + ghost-cursor + challenge solver)
 packages/clients/       HTTP clients for calling the services
-docker-compose.yml      Runs both services
+docker-compose.yml      Runs both services with Google Chrome + Xvfb
 ```
 
 ## When to use which service
@@ -104,7 +104,7 @@ docker-compose.yml      Runs both services
 | | browser-fetch | stealth-fetch |
 |---|---|---|
 | **Use for** | JS rendering, moderate anti-bot | DataDome, PerimeterX, Cloudflare challenges |
-| **Stack** | puppeteer-extra stealth + Chrome | Camoufox (patched Firefox) + Playwright |
+| **Stack** | puppeteer-extra stealth | rebrowser-patches + ghost-cursor |
 | **Cost** | Lower RAM, faster | Higher RAM, slower, more retries |
 | **Typical targets** | News sites, SPAs with light protection | Paywalled or heavily protected publishers |
 
@@ -115,10 +115,9 @@ Keep both if you scrape a mix of sites. Use stealth-fetch alone if every target 
 | Variable | Service | Default | Description |
 |----------|---------|---------|-------------|
 | `PORT` | both | `3040` / `3041` | HTTP listen port |
-| `DATA_DIR` | both | `/data` | Browser profiles, disk cache, response cache |
-| `CHROMIUM_PATH` | browser-fetch | Chrome in container | Path to Google Chrome binary |
-| `CAMOUFOX_INSTALL_DIR` | stealth-fetch | `/opt/camoufox` in Docker | Camoufox install directory |
-| `BROWSER_HEADLESS` | both | `false` (browser-fetch Docker) / `true` (stealth-fetch) | Headless mode |
+| `DATA_DIR` | both | `/data` | Chrome profiles, disk cache, response cache |
+| `CHROMIUM_PATH` | both | Chrome in container | Path to Google Chrome binary |
+| `BROWSER_HEADLESS` | both | `false` in Docker | Headless mode (`false` + Xvfb is recommended) |
 | `FETCH_API_KEY` | both | — | Require `X-Api-Key` header when set |
 | `CACHE_TTL_SECONDS` | both | `86400` / `3600` | Response cache TTL |
 | `BROWSER_POOL_SIZE` | both | `2` | Max concurrent browser instances |

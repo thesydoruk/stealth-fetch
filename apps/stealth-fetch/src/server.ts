@@ -58,7 +58,7 @@ interface FetchBody {
   warmupUrl?: string;
   warmupPaths?: string[];
   sessionCookies?: SessionCookie[];
-  /** Optional upstream proxy — wired at Camoufox launch when set. */
+  /** Optional upstream proxy — wired at Chromium launch when set. */
   proxy?: ProxyConfig;
   humanSession?: HumanSessionOptions;
   solveChallenges?: boolean;
@@ -117,12 +117,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url?.startsWith("/info")) {
       json(res, 200, {
         ok: true,
-        chromiumPath: process.env.CAMOUFOX_INSTALL_DIR ?? null,
-        headless: (process.env.BROWSER_HEADLESS ?? "true").toLowerCase() !== "false",
+        chromiumPath: process.env.CHROMIUM_PATH ?? null,
+        headless: (process.env.BROWSER_HEADLESS ?? "false").toLowerCase() === "true",
         display: process.env.DISPLAY ?? null,
         cacheTtlSeconds: cacheTtlMs / 1000,
         proxySupported: true,
-        driver: "camoufox",
+        driver: "rebrowser-puppeteer-core",
+        rebrowserFixMode: process.env.REBROWSER_PATCHES_RUNTIME_FIX_MODE ?? "addBinding",
         inContainer: true,
       });
       return;
@@ -254,7 +255,7 @@ server.listen(port, "0.0.0.0", () => {
     port,
     cacheDir,
     cacheTtlMs,
-    camoufoxDir: process.env.CAMOUFOX_INSTALL_DIR ?? null,
+    chromiumPath: process.env.CHROMIUM_PATH ?? null,
     headless: (process.env.BROWSER_HEADLESS ?? "true").toLowerCase() !== "false",
   });
 });
