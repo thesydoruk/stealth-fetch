@@ -6,6 +6,7 @@ import fs from "node:fs";
 
 import { acquireBrowser, drainPool, releaseBrowser, type PooledBrowser } from "./browser-pool";
 import { STEALTH_ARGS, STEALTH_VIEWPORT } from "./constants";
+import { looksLikeChallenge } from "./looksLikeChallenge";
 import { createLogger } from "./logger";
 
 const log = createLogger("fetch-page");
@@ -28,19 +29,6 @@ interface PuppeteerPage {
   waitForSelector: (selector: string, options?: Record<string, unknown>) => Promise<unknown>;
   waitForNavigation: (options?: Record<string, unknown>) => Promise<PuppeteerResponse | null>;
   evaluate: <T>(fn: (...args: unknown[]) => T, ...args: unknown[]) => Promise<T>;
-}
-
-const CHALLENGE_SIGNATURES = [
-  "captcha-delivery.com",
-  "geo.captcha-delivery",
-  "datadome",
-  "/cdn-cgi/challenge-platform",
-  "cf-browser-verification",
-];
-
-function looksLikeChallenge(html: string): boolean {
-  const lower = html.toLowerCase();
-  return CHALLENGE_SIGNATURES.some((sig) => lower.includes(sig));
 }
 
 export interface FetchPageOptions {

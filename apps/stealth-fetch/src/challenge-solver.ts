@@ -8,25 +8,14 @@
 
 import type { StealthPage } from "./human-behavior";
 import { humanDelay } from "./human-behavior";
+import { looksLikeChallenge } from "./looksLikeChallenge";
 import { looksLikePxHoldChallenge } from "./looksLikePxHoldChallenge";
 import { createLogger } from "./logger";
 import { solvePxHoldChallenge } from "./solvePxHoldChallenge";
 
+export { looksLikeChallenge } from "./looksLikeChallenge";
+
 const log = createLogger("challenge-solver");
-
-/** Same signatures as apps/browser-fetch (in-tree, pre-merge). */
-const CHALLENGE_SIGNATURES = [
-  "captcha-delivery.com",
-  "geo.captcha-delivery",
-  "datadome",
-  "/cdn-cgi/challenge-platform",
-  "cf-browser-verification",
-];
-
-export function looksLikeChallenge(html: string): boolean {
-  const lower = html.toLowerCase();
-  return CHALLENGE_SIGNATURES.some((sig) => lower.includes(sig)) || looksLikePxHoldChallenge(html);
-}
 
 export interface ChallengeSolveResult {
   detected: boolean;
