@@ -5,6 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { createPoolWaitQueue } from "./pool-wait-queue";
+import { FetchCancelledError } from "./session-deadline";
 import type { ProxyConfig } from "./types";
 import { createLogger } from "./logger";
 import { resolveWritableDataRoot } from "./resolve-writable-data-root";
@@ -72,17 +74,10 @@ function ensureReaper(): void {
   }, 30_000);
 }
 
-const waiters: (() => void)[] = [];
-
-function waitForRelease(): Promise<void> {
-  return new Promise<void>((resolve) => {
-    waiters.push(resolve);
-  });
-}
+const slotWaiters = createPoolWaitQueue();
 
 function resolveWaiters(): void {
-  const next = waiters.shift();
-  if (next) next();
+  slotWaiters.notifyNext();
 }
 
 /** Slots reserved for an in-flight `launch()` — counted toward the cap. */
@@ -130,6 +125,10 @@ function withReserveLock<T>(fn: () => T | Promise<T>): Promise<T> {
 export interface AcquireBrowserOptions {
   launchOptions: Record<string, unknown>;
   proxy?: ProxyConfig;
+  /** Cancel a pool wait when the HTTP client hangs up. */
+  signal?: AbortSignal;
+  /** Max time to wait for a free slot (session budget remaining). */
+  waitTimeoutMs?: number;
 }
 
 type ReserveOutcome =
@@ -165,6 +164,7 @@ export async function acquireBrowser(options: AcquireBrowserOptions): Promise<Po
 
   let slot = -1;
   for (;;) {
+    if (options.signal?.aborted) throw new FetchCancelledError("aborted");
     const outcome = await withReserveLock(() => reserveOrReuse(proxyKey));
     if (outcome.kind === "reuse") {
       log.debug("Reused pooled browser", {
@@ -177,7 +177,10 @@ export async function acquireBrowser(options: AcquireBrowserOptions): Promise<Po
     }
     if (outcome.kind === "wait") {
       log.warn("Browser pool at capacity, waiting", { max: maxPoolSize, proxyKey });
-      await waitForRelease();
+      await slotWaiters.wait({
+        timeoutMs: options.waitTimeoutMs ?? 60_000,
+        signal: options.signal,
+      });
       continue;
     }
     slot = outcome.slot;

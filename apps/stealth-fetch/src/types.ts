@@ -70,6 +70,8 @@ export interface StealthFetchOptions {
   maxChallengeAttempts?: number;
   /** Retry fetch with a fresh pool slot when challenge HTML persists. Default true. */
   retryOnChallenge?: boolean;
+  /** Abort the session when the HTTP client disconnects. */
+  signal?: AbortSignal;
 }
 
 export interface StealthFetchResult {

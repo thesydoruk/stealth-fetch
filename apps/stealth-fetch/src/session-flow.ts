@@ -9,6 +9,7 @@ import {
   simulateMouseWander,
   simulateWarmupScroll,
 } from "./human-behavior";
+import type { SessionDeadline } from "./session-deadline";
 import type { HumanSessionOptions, SessionCookie } from "./types";
 import { createLogger } from "./logger";
 
@@ -38,12 +39,15 @@ export async function runWarmupSession(
   timeoutMs: number,
   human?: HumanSessionOptions,
   cursorPage?: object,
+  deadline?: SessionDeadline,
 ): Promise<void> {
   const opts = resolveHumanDefaults(human);
   const waitUntil = "domcontentloaded";
+  const navTimeout = (): number => deadline?.capTimeoutMs(timeoutMs) ?? timeoutMs;
 
   log.info("Warmup navigation", { warmupUrl });
-  await page.goto(warmupUrl, { waitUntil, timeout: timeoutMs });
+  await page.goto(warmupUrl, { waitUntil, timeout: navTimeout() });
+  deadline?.throwIfCancelled();
   await humanDelay(opts.delayMinMs, opts.delayMaxMs);
 
   if (opts.mouseMovement) {
@@ -56,9 +60,10 @@ export async function runWarmupSession(
 
   const paths = (warmupPaths ?? []).filter(Boolean);
   for (const path of paths) {
+    deadline?.throwIfCancelled();
     const nextUrl = new URL(path, warmupUrl).href;
     log.info("Warmup intermediate path", { url: nextUrl });
-    await page.goto(nextUrl, { waitUntil, timeout: timeoutMs });
+    await page.goto(nextUrl, { waitUntil, timeout: navTimeout() });
     await humanDelay(opts.delayMinMs, opts.delayMaxMs);
     if (opts.mouseMovement) await simulateMouseWander(page, 1, cursorPage);
     if (opts.warmupScroll) await simulateWarmupScroll(page);

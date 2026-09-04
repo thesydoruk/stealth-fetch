@@ -76,7 +76,7 @@ npm run start:stealth-fetch
 }
 ```
 
-stealth-fetch additionally accepts `warmupUrl`, `warmupPaths`, `sessionCookies`, `proxy`, `humanSession`, `solveChallenges`, and related options.
+stealth-fetch additionally accepts `warmupUrl`, `warmupPaths`, `sessionCookies`, `proxy`, `humanSession`, `solveChallenges`, and related options. `timeoutMs` is the budget for the whole session (pool wait, warmup, target, challenge retries). If the HTTP client disconnects, the session is cancelled and the browser returns to the pool.
 
 ## Node clients
 
@@ -121,7 +121,7 @@ Keep both if you scrape a mix of sites. Use stealth-fetch alone if every target 
 | `FETCH_API_KEY` | both | — | Require `X-Api-Key` header when set |
 | `CACHE_TTL_SECONDS` | both | `86400` / `3600` | Response cache TTL |
 | `BROWSER_POOL_SIZE` | both | `2` | Max concurrent browser instances |
-| `FETCH_TIMEOUT_MS` | both | `90000` / `120000` | Page load timeout |
+| `FETCH_TIMEOUT_MS` | both | `90000` / `120000` | Whole-session budget (pool wait, warmup, target, challenge retries) |
 | `STEALTH_IN_CONTAINER` | stealth-fetch | `true` in Docker | Guard against accidental host runs |
 
 Client-side (callers):

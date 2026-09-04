@@ -16,10 +16,18 @@ import {
 import { createLogger } from "./logger";
 import { FALLBACK_VIEWPORT } from "./constants";
 import { discardCookiesIfPoisoned } from "./discard-poisoned-session";
+import {
+  createSessionDeadline,
+  FetchCancelledError,
+  type SessionDeadline,
+} from "./session-deadline";
 import { applySessionCookies, runWarmupSession, type NavigablePage } from "./session-flow";
 import type { StealthFetchOptions, StealthFetchResult } from "./types";
 
 const log = createLogger("fetch-page");
+
+/** Skip a challenge retry when less than this remains on the session clock. */
+const MIN_CHALLENGE_RETRY_MS = 8_000;
 
 interface PuppeteerResponse {
   status: () => number | null;
@@ -75,9 +83,13 @@ async function navigateTarget(
   page: PuppeteerPage,
   url: string,
   options: StealthFetchOptions,
+  deadline: SessionDeadline,
 ): Promise<PuppeteerResponse | null> {
   const waitUntil = options.waitForNetworkIdle ? "networkidle2" : "domcontentloaded";
-  const gotoOptions: Record<string, unknown> = { waitUntil, timeout: options.timeoutMs };
+  const gotoOptions: Record<string, unknown> = {
+    waitUntil,
+    timeout: deadline.capTimeoutMs(options.timeoutMs),
+  };
   if (options.referer) gotoOptions.referer = options.referer;
   return page.goto(url, gotoOptions);
 }
@@ -118,19 +130,34 @@ async function expandHubListing(page: PuppeteerPage, options: StealthFetchOption
   }
 }
 
-async function fetchOnce(url: string, options: StealthFetchOptions): Promise<StealthFetchResult> {
+async function fetchOnce(
+  url: string,
+  options: StealthFetchOptions,
+  deadline: SessionDeadline,
+): Promise<StealthFetchResult> {
   const human = resolveHumanDefaults(options.humanSession);
+  deadline.throwIfCancelled();
 
   const browser = await acquireBrowser({
-    launchOptions: resolveStealthLaunchOptions(options.chromiumPath, options.timeoutMs),
+    launchOptions: resolveStealthLaunchOptions(
+      options.chromiumPath,
+      deadline.capTimeoutMs(options.timeoutMs),
+    ),
     proxy: options.proxy,
+    signal: deadline.signal,
+    waitTimeoutMs: deadline.remainingMs(),
   });
 
   let challengeDetected = false;
   let challengeSolved = false;
+  let page: PuppeteerPage | undefined;
+  const onAbort = (): void => {
+    void page?.close().catch(() => {});
+  };
+  deadline.signal?.addEventListener("abort", onAbort);
 
   try {
-    const page = (await (
+    page = (await (
       browser as unknown as { newPage: () => Promise<PuppeteerPage> }
     ).newPage()) as PuppeteerPage;
 
@@ -145,19 +172,26 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
         options.timeoutMs,
         options.humanSession,
         page,
+        deadline,
       );
+      deadline.throwIfCancelled();
       await humanDelay(human.delayMinMs, human.delayMaxMs + 600);
     } else if (human.mouseMovement) {
       await simulateMouseWander(page, 1, page);
     }
 
-    let response = await navigateTarget(page, url, options);
+    let response = await navigateTarget(page, url, options, deadline);
+    deadline.throwIfCancelled();
     await humanDelay(700, 1_600);
 
     let html = await page.content();
 
     if (options.solveChallenges !== false && looksLikeChallenge(html)) {
-      const solved = await solveChallengeIfPresent(page, html, options.waitForSelectorTimeoutMs);
+      const solved = await solveChallengeIfPresent(
+        page,
+        html,
+        deadline.capTimeoutMs(options.waitForSelectorTimeoutMs),
+      );
       challengeDetected = solved.detected;
       challengeSolved = solved.solved;
       html = solved.htmlAfter;
@@ -167,10 +201,11 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
     if (options.waitForSelector) {
       try {
         await page.waitForSelector(options.waitForSelector, {
-          timeout: options.waitForSelectorTimeoutMs,
+          timeout: deadline.capTimeoutMs(options.waitForSelectorTimeoutMs),
         });
         await humanDelay(300, 900);
       } catch (err) {
+        if (err instanceof FetchCancelledError) throw err;
         log.warn("waitForSelector timed out", {
           url,
           selector: options.waitForSelector,
@@ -211,6 +246,8 @@ async function fetchOnce(url: string, options: StealthFetchOptions): Promise<Ste
       attempts: 1,
     };
   } finally {
+    deadline.signal?.removeEventListener("abort", onAbort);
+    await page?.close().catch(() => {});
     releaseBrowser(browser as PooledBrowser);
   }
 }
@@ -259,6 +296,7 @@ export async function fetchStealthHtml(
     ...partial,
   };
 
+  const deadline = createSessionDeadline(options.timeoutMs, options.signal);
   const maxAttempts = Math.max(
     1,
     options.retryOnChallenge ? (options.maxChallengeAttempts ?? 2) : 1,
@@ -266,8 +304,16 @@ export async function fetchStealthHtml(
   let last: StealthFetchResult | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    deadline.throwIfCancelled();
+    if (attempt > 1 && deadline.remainingMs() < MIN_CHALLENGE_RETRY_MS) {
+      log.warn("Skipping challenge retry, session budget exhausted", {
+        url,
+        remainingMs: deadline.remainingMs(),
+      });
+      break;
+    }
     log.info("Stealth fetch attempt", { url, attempt, maxAttempts });
-    const result = await fetchOnce(url, options);
+    const result = await fetchOnce(url, options, deadline);
     result.attempts = attempt;
     last = result;
 

@@ -15,6 +15,7 @@ import { drainPool, fetchStealthHtml } from "./fetch-page";
 import { normalizeFetchUrl, readDiskCache, writeDiskCache } from "./disk-cache";
 import { createLogger } from "./logger";
 import { resolveWritableDataRoot } from "./resolve-writable-data-root";
+import { FetchCancelledError } from "./session-deadline";
 import type { HumanSessionOptions, ProxyConfig, SessionCookie } from "./types";
 
 const log = createLogger("server");
@@ -184,27 +185,49 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      const fetched = await fetchStealthHtml(url, {
-        waitForSelector: body.waitForSelector,
-        waitForNetworkIdle: body.waitForNetworkIdle,
-        timeoutMs: body.timeoutMs,
-        waitForSelectorTimeoutMs: body.waitForSelectorTimeoutMs,
-        extraHeaders: body.headers,
-        userAgent: body.userAgent,
-        referer: body.referer,
-        timezone: body.timezone,
-        hubLoadMoreSelector: body.hubLoadMoreSelector,
-        hubLoadMoreMaxRepeats: body.hubLoadMoreMaxRepeats,
-        hubScrollMaxRepeats: body.hubScrollMaxRepeats,
-        warmupUrl: body.warmupUrl,
-        warmupPaths: body.warmupPaths,
-        sessionCookies: body.sessionCookies,
-        proxy: body.proxy,
-        humanSession: body.humanSession,
-        solveChallenges: body.solveChallenges,
-        maxChallengeAttempts: body.maxChallengeAttempts,
-        retryOnChallenge: body.retryOnChallenge,
-      });
+      const abort = new AbortController();
+      const onClientGone = (): void => {
+        if (!res.writableEnded) abort.abort();
+      };
+      req.on("close", onClientGone);
+
+      let fetched;
+      try {
+        fetched = await fetchStealthHtml(url, {
+          waitForSelector: body.waitForSelector,
+          waitForNetworkIdle: body.waitForNetworkIdle,
+          timeoutMs: body.timeoutMs,
+          waitForSelectorTimeoutMs: body.waitForSelectorTimeoutMs,
+          extraHeaders: body.headers,
+          userAgent: body.userAgent,
+          referer: body.referer,
+          timezone: body.timezone,
+          hubLoadMoreSelector: body.hubLoadMoreSelector,
+          hubLoadMoreMaxRepeats: body.hubLoadMoreMaxRepeats,
+          hubScrollMaxRepeats: body.hubScrollMaxRepeats,
+          warmupUrl: body.warmupUrl,
+          warmupPaths: body.warmupPaths,
+          sessionCookies: body.sessionCookies,
+          proxy: body.proxy,
+          humanSession: body.humanSession,
+          solveChallenges: body.solveChallenges,
+          maxChallengeAttempts: body.maxChallengeAttempts,
+          retryOnChallenge: body.retryOnChallenge,
+          signal: abort.signal,
+        });
+      } catch (err) {
+        if (err instanceof FetchCancelledError && err.reason === "aborted") {
+          log.warn("Fetch cancelled after client disconnect", { url });
+          return;
+        }
+        if (err instanceof FetchCancelledError) {
+          json(res, 504, { ok: false, error: err.message });
+          return;
+        }
+        throw err;
+      } finally {
+        req.off("close", onClientGone);
+      }
 
       const cacheable =
         !body.skipCache &&
