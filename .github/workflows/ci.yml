@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  check:
+    name: Type-check, build, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # The service images run node:20-slim.
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --fund=false
+      - name: Type-check
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test -w @stealth-fetch/stealth-fetch
+
+  # Pull requests build and smoke both images; pushes to master and v* tags
+  # also publish them, and only after the smoke passed.
+  image:
+    name: Image (${{ matrix.app }})
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: browser-fetch
+            port: 3040
+          - app: stealth-fetch
+            port: 3041
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # master       → :master, :sha-<short>
+      # tag v1.2.3   → :1.2.3, :1.2, :latest   (a pre-release tag gets only :<version>)
+      # pull request → nothing to push
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=ref,event=branch,enable={{is_default_branch}}
+            type=sha,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          # Google's apt repo is amd64-only.
+          platforms: linux/amd64
+          load: true
+          tags: |
+            ${{ matrix.app }}:ci
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+      - name: Smoke
+        run: bash scripts/image-smoke.sh ${{ matrix.app }}:ci ${{ matrix.port }}
+      - if: github.event_name == 'push' && steps.meta.outputs.tags != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        if: github.event_name == 'push' && steps.meta.outputs.tags != ''
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in ${TAGS}; do
+            docker push "${tag}"
+          done
