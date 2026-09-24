@@ -22,6 +22,20 @@ curl -s -X POST http://localhost:3040/fetch \
   -d '{"url":"https://example.com"}'
 ```
 
+### Prebuilt images
+
+CI (`.github/workflows/ci.yml`) type-checks, builds and tests the workspaces, then builds both images and smoke-tests each one by rendering a page through its Chrome. Pull requests stop there. Pushes to `master` and `v*` tags publish to GHCR:
+
+| Ref | Tags |
+|-----|------|
+| `master` | `master`, `sha-<short>` |
+| `v1.2.3` | `1.2.3`, `1.2`, `latest` |
+
+```bash
+docker pull ghcr.io/thesydoruk/stealth-fetch/browser-fetch:master
+docker pull ghcr.io/thesydoruk/stealth-fetch/stealth-fetch:master
+```
+
 ## Local development
 
 ```bash
